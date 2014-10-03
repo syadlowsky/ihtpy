@@ -13,17 +13,17 @@ class IHTClassifier(object):
         self.training_time = 0.0
         self.beta = None
 
-    def train(self, dataset, card=50, verbose=False):
+    def train(self, X, y, card=50, verbose=False):
         start = time.time()
         if verbose:
             print "Preconditioning matrix"
         whitened_X, feature_avg = self.whiten_features(X)
         if verbose:
             print "Matching pursuits"
-        x_hat = self.matching_pursuit_sparse(dataset.y, whitened_X, avg_dyad, card)
+        x_hat = self.matching_pursuit_sparse(y, whitened_X, feature_avg, card)
         if verbose:
             print "Running iterative hard thresholding"
-        self.beta = self.AIHT_sparse(dataset.y, whitened_X, x_hat, card, avg_dyad)
+        self.beta = self.AIHT_sparse(y, whitened_X, x_hat, card, feature_avg)
 
         self.training_time += time.time() - start
 
