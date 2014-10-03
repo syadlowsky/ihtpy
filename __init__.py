@@ -6,6 +6,8 @@
 import numpy as np
 import time
 import operator
+import sys
+import scipy.sparse
 
 class IHTClassifier(object):
     
@@ -13,17 +15,21 @@ class IHTClassifier(object):
         self.training_time = 0.0
         self.beta = None
 
+    def card(self, x):
+        return np.sum(x != 0)
+
     def train(self, X, y, card=50, verbose=False):
         start = time.time()
         if verbose:
             print "Preconditioning matrix"
         whitened_X, feature_avg = self.whiten_features(X)
+        lsv = float(self.compute_lsv(whitened_X, feature_avg))
         if verbose:
             print "Matching pursuits"
-        x_hat = self.matching_pursuit_sparse(y, whitened_X, feature_avg, card)
+        x_hat = self.matching_pursuit_sparse(y, whitened_X/lsv, feature_avg/lsv, card)
         if verbose:
             print "Running iterative hard thresholding"
-        self.beta = self.AIHT_sparse(y, whitened_X, x_hat, card, feature_avg)
+        self.beta = self.AIHT_sparse(y, whitened_X/lsv, x_hat, card, feature_avg/lsv)/lsv
 
         self.training_time += time.time() - start
 
@@ -42,6 +48,27 @@ class IHTClassifier(object):
 
         return X, feature_avg
 
+    def compute_lsv(self, X, feature_avg):
+        def matmuldyad(v):
+            return X.dot(v) - feature_avg.dot(v)
+
+        def rmatmuldyad(v):
+            return X.T.dot(v) - v.sum()*feature_avg
+        normalized_lin_op = scipy.sparse.linalg.LinearOperator(X.shape, matmuldyad, rmatmuldyad)
+
+        def matvec_XH_X(v):
+            return normalized_lin_op.rmatvec(normalized_lin_op.matvec(v))
+
+        which='LM'
+        v0=None
+        maxiter=None
+        return_singular_vectors=False
+
+        XH_X = scipy.sparse.linalg.LinearOperator(matvec=matvec_XH_X, dtype=X.dtype, shape=(X.shape[1], X.shape[1]))
+        eigvals = scipy.sparse.linalg.eigs(XH_X, k=1, tol=0, maxiter=None, ncv=10, which=which, v0=v0, return_eigenvectors=False)
+        lsv = np.sqrt(eigvals)
+        return lsv[0].real
+
     def matching_pursuit_sparse(self, y, X, feature_avg, k, tol=10**-10):
         '''
         Matching Pursuit
@@ -50,8 +77,8 @@ class IHTClassifier(object):
         X = X.tocsc()
         err_norm = np.linalg.norm(r, 2)
         err_norm_prev = 0
-        beta = np.zeros(X.shape[0])
-        while utils.card(y_choice) < k:
+        beta = np.zeros(X.shape[1])
+        while self.card(beta) < k:
             all_inner_products = X.T.dot(r) - np.sum(r)*feature_avg
             max_index, max_abs_inner_product = max(enumerate(np.abs(all_inner_products)), key=operator.itemgetter(1))
             g = X[:, max_index]
@@ -99,8 +126,8 @@ class IHTClassifier(object):
         if example_weights is None:
             example_weights = np.ones(m)
     
-    
         for iter_ in xrange(max_iters):
+            sys.stdout.flush()
             X_beta_twice_prev = X_beta_prev
             X_beta_prev = X_beta
             X_beta = (X.dot(beta) - feature_avg.dot(beta))
@@ -108,6 +135,7 @@ class IHTClassifier(object):
             err = y - example_weights*X_beta
             err_reg = -alpha*beta
             norm_change = ((np.linalg.norm(beta - beta_prev)**2)/n)
+            print err.dot(err) + err_reg.dot(err_reg), norm_change, np.linalg.norm(beta)
 
             if iter_ > 0 and (norm_change <= tol):
                 break
@@ -128,27 +156,27 @@ class IHTClassifier(object):
                 dp = delta_X_beta.dot(example_weights*delta_X_beta) + delta_regularization.dot(delta_regularization)
                 if dp > 0:
                     a1 = (delta_X_beta.dot(err) + delta_regularization.dot(err_reg))/dp
-                    phi_y_1 = (1+a1)*X_beta - a1*X_beta_prev
-                    y_1 = beta_t + a1*(beta_t - beta)
-                    err_1 = y - example_weights*phi_y_1
-                    err_1_reg = -alpha*y_1
+                    X_beta_1 = (1+a1)*X_beta - a1*X_beta_prev
+                    beta_1 = beta_t + a1*(beta_t - beta)
+                    err_1 = y - example_weights*X_beta_1
+                    err_1_reg = -alpha*beta_1
     
-                    delta_X_beta = phi_y_1 - X_beta_twice_prev
-                    delta_regularization = alpha*(y_1 - beta_prev)
+                    delta_X_beta = X_beta_1 - X_beta_twice_prev
+                    delta_regularization = alpha*(beta_1 - beta_prev)
                     dp = delta_X_beta.dot(example_weights*delta_X_beta) + delta_regularization.dot(delta_regularization)
                     if dp > 0:
                         a2 = (delta_X_beta.dot(err_1) + delta_regularization.dot(err_1_reg))/dp
-                        y_2 = y_1 + a2*(y_1 - beta_prev)
-                        y_2, thresh = self.thresholder(y_2,k)
+                        beta_2 = beta_1 + a2*(beta_1 - beta_prev)
+                        beta_2, thresh = self.thresholder(beta_2,k)
     
-                        phi_y_2 = X.dot(y_2) - feature_avg.dot(y_2)
-                        phi_y_2 = np.squeeze(np.asarray(phi_y_2))
-                        err_2 = y - example_weights*phi_y_2
-                        err_reg_2 = -alpha*y_2
+                        X_beta_2 = X.dot(beta_2) - feature_avg.dot(beta_2)
+                        X_beta_2 = np.squeeze(np.asarray(X_beta_2))
+                        err_2 = y - example_weights*X_beta_2
+                        err_reg_2 = -alpha*beta_2
     
                         if (err_2.dot(err_2) + err_reg_2.dot(err_reg_2)) / (err.dot(err) + err_reg.dot(err_reg)) < 1:
-                            beta_t_star = y_2
-                            X_beta = phi_y_2
+                            beta_t_star = beta_2
+                            X_beta = X_beta_2
     
             beta_prev = beta
             beta = beta_t_star
