@@ -6,8 +6,6 @@
 import numpy as np
 import time
 import operator
-import utils
-from utils import *
 
 class IHTClassifier(object):
     
