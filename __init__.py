@@ -6,7 +6,6 @@
 import numpy as np
 import time
 import operator
-import sys
 import scipy.sparse
 
 class IHTClassifier(object):
@@ -127,7 +126,6 @@ class IHTClassifier(object):
             example_weights = np.ones(m)
     
         for iter_ in xrange(max_iters):
-            sys.stdout.flush()
             X_beta_twice_prev = X_beta_prev
             X_beta_prev = X_beta
             X_beta = (X.dot(beta) - feature_avg.dot(beta))
