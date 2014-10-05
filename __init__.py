@@ -33,7 +33,7 @@ class IHTClassifier(object):
         self.training_time += time.time() - start
 
     def whiten_features(self, X):
-        X = X.tocsr()
+        X = X.tocsr(copy=True)
         row_avg = np.bincount(X.indices, weights=X.data)
         row_avg /= float(X.shape[0])
         row_norm = np.bincount(X.indices, weights=(X.data - row_avg[X.indices])**2)
